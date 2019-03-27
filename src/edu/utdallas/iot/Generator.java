@@ -14,6 +14,7 @@ import org.influxdb.dto.Point;
 import java.io.File;
 import java.io.IOException;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 public class Generator {
@@ -26,7 +27,7 @@ public class Generator {
     private static int BW = 100; // buffer window
     private static int MW = BW * 10; // merge window
     private static int FILE_SIZE = 20;
-    private static int INTERVAL = 10;
+    private static int INTERVAL = 1;
 
     private static int LABEL_BASELINE = 0;
     private static int LABEL_OUTER_RACE_FAULT = 1;
@@ -83,7 +84,7 @@ public class Generator {
         for (int i = 0; i < filenames.length; i++) {
             MatFileReader reader = new MatFileReader(filenames[i]);
             readers[i] = (MLStructure) reader.getMLArray(db);
-            int len = readers[i].getField(ATTR_LOAD).getSize();
+            int len = readers[i].getField(ATTR_GS).getSize();
             lengths[i] = len - len % MW;
             totalLength += lengths[i];
             cursors[i] = 0;
@@ -97,17 +98,22 @@ public class Generator {
 
     private int selectFile() {
         double prob = random.nextDouble();
-        for (int i = 0; i < probs.length; i++) {
-            if (prob <= probs[i]) {
-                return i;
-            }
+        int min, max;
+
+        if (prob < 0.7) {
+            min = 0;
+            max = 2;
+        }
+        else {
+            min = 3;
+            max = 19;
         }
 
-        return probs.length - 1;
+        return ThreadLocalRandom.current().nextInt(min, max + 1);
     }
 
     private int generatepPoints(int index, String metric) {
-        int len = readers[index].getField(ATTR_LOAD).getSize();
+        int len = readers[index].getField(ATTR_GS).getSize();
         int start = cursors[index];
         int end = cursors[index] + MW;
         if (MW > len - cursors[index]) {
@@ -118,15 +124,21 @@ public class Generator {
                 .database(db)
                 .build();
         for (int i = start; i < end; i++ ) {
-            Point point = Point.measurement(metric)
+            Point.Builder builder = Point.measurement(metric)
                     .time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
                     .addField("label", getLabel(index))
                     .addField(ATTR_SR, ((MLDouble)readers[index].getField(ATTR_SR)).getArray()[0][0])
-                    .addField(ATTR_LOAD, ((MLChar)readers[index].getField(ATTR_LOAD)).getString(0))
                     .addField(ATTR_RATE, ((MLDouble)readers[index].getField(ATTR_RATE)).getArray()[0][0])
-                    .addField(ATTR_GS, ((MLDouble)readers[index].getField(ATTR_GS)).getArray()[0][0])
-                    .build();
-            batchPoints.point(point);
+                    .addField(ATTR_GS, ((MLDouble)readers[index].getField(ATTR_GS)).getArray()[i][0]);
+
+            if (readers[index].getField(ATTR_LOAD) instanceof MLChar) {
+                builder.addField(ATTR_LOAD, ((MLChar) readers[index].getField(ATTR_LOAD)).getString(0));
+            }
+            else {
+                builder.addField(ATTR_LOAD, String.valueOf(((MLDouble) readers[index].getField(ATTR_LOAD)).getArray()[0][0]));
+            }
+
+            batchPoints.point(builder.build());
             try {
                 Thread.sleep(INTERVAL);
             } catch (InterruptedException ignored) {
@@ -167,7 +179,7 @@ public class Generator {
 
         while (true) {
             int index = generator.selectFile();
-            offlineCount += generator.generatepPoints(index, "online");
+            generator.generatepPoints(index, "online");
         }
     }
 }
