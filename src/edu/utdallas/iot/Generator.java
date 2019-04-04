@@ -24,8 +24,8 @@ public class Generator {
     private String password = "alien1";
     private String db = "bearing";
     private InfluxDB influxDB;
-    private static int BW = 100; // buffer window
-    private static int MW = BW * 10; // merge window
+    private static int BW = 256; // buffer window
+    private static int MW = BW * 4; // merge window
     private static int FILE_SIZE = 20;
     private static int INTERVAL = 1;
 
@@ -70,6 +70,7 @@ public class Generator {
     private int totalLength;
     private Random random = new Random();
     private int[] cursors = new int[FILE_SIZE];
+    private long timestamp;
 
     private void connect() {
         influxDB = InfluxDBFactory.connect(host, username, password);
@@ -125,7 +126,7 @@ public class Generator {
                 .build();
         for (int i = start; i < end; i++ ) {
             Point.Builder builder = Point.measurement(metric)
-                    .time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+                    .time(timestamp++, TimeUnit.MILLISECONDS)
                     .addField("label", getLabel(index))
                     .addField(ATTR_SR, ((MLDouble)readers[index].getField(ATTR_SR)).getArray()[0][0])
                     .addField(ATTR_RATE, ((MLDouble)readers[index].getField(ATTR_RATE)).getArray()[0][0])
@@ -139,12 +140,9 @@ public class Generator {
             }
 
             batchPoints.point(builder.build());
-            try {
-                Thread.sleep(INTERVAL);
-            } catch (InterruptedException ignored) {
-            }
         }
         influxDB.write(batchPoints);
+        System.out.println(batchPoints.getPoints().size() + " points were written to influx");
         return MW;
     }
 
@@ -172,11 +170,13 @@ public class Generator {
 
         int offlineCount = 0;
         int offlineTotal = generator.totalLength / 2;
+        generator.timestamp = 0;
         while (offlineCount < offlineTotal) {
             int index = generator.selectFile();
             offlineCount += generator.generatepPoints(index, "offline");
         }
 
+        generator.timestamp = 0;
         while (true) {
             int index = generator.selectFile();
             generator.generatepPoints(index, "online");
